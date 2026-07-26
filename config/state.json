@@ -1,8 +1,11 @@
 {
   "mode": {
     "type": "single",
-    "book": "paradise_lost"
+    "book": "inferno"
   },
   "pausedAt": null,
-  "accumulatedPauseMinutes": 0
+  "accumulatedPauseMinutes": 0,
+  "intervalMinutes": null,
+  "tickBase": 0,
+  "intervalSetAtAwakeMinutes": null
 }
