@@ -6,6 +6,26 @@ its own — a third-party cron service (cron-job.org) is what drives it forward.
 
 Live: https://vestabook.vercel.app
 
+## Remote control PWA
+
+The home page is an installable, mobile-first remote control. Open the live URL on a phone
+and add it to the home screen (iPhone: Safari → Share → **Add to Home Screen**; Android:
+Chrome → ⋮ → **Add to Home screen** / "Install app") and it launches full-screen like a
+native app.
+
+It shows a live replica of the board — a 6×22 grid of split-flap tiles that flips when the
+text changes — plus the current book, position ("Frame 214 of 4,880"), and PAUSED / QUIET
+HOURS badges. Controls: pick a book, Shuffle (random book each time one finishes),
+Auto-cycle, Pause/Resume, and page-turn pace (5 or 10 minutes).
+
+All controls go through `/api/control` (below), so they need the dongle secret: tap the ⚙
+gear and enter `CONTROL_DONGLE_SECRET` once — it's kept in the browser's localStorage.
+Because control changes ride a git commit + Vercel redeploy, the app shows an "Applying…"
+state and polls until the change lands (~15–30 s). The read-only view (board, status) needs
+no secret at all.
+
+There's a one-page manual for non-technical users in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
+
 ## Design: no database, no stored position
 
 The current frame is computed purely from elapsed time:
@@ -54,7 +74,11 @@ that's done without a database.
 3. **`GET /api/preview`** — no auth, returns the current frame as 6 lines of plain text, plus
    `X-Book-Id` / `X-Frame-Index` / `X-Quiet-Hours` / `X-Paused` headers. Use this to
    sanity-check pagination or debug timing without touching the real board.
-4. **`GET /api/control`** — dongle-gated, changes which book/mode is showing. See below.
+4. **`GET /api/status`** — no auth, everything the PWA renders in one JSON payload: current
+   `bookId`/`frameIndex`/`totalFrames`, the frame's 6 lines, `mode` (`cycle`/`single`/`random`),
+   `paused`, `quietHours`, the effective `intervalMinutes`, and the book list with titles and
+   frame counts.
+5. **`GET /api/control`** — dongle-gated, changes which book/mode is showing. See below.
 
 ## Book library & `/api/control`
 
@@ -71,12 +95,24 @@ GET /api/control?random=true&dongle=<CONTROL_DONGLE_SECRET>      # reroll to a n
 GET /api/control?random=false&dongle=<CONTROL_DONGLE_SECRET>     # back to auto-cycle
 GET /api/control?pause=true&dongle=<CONTROL_DONGLE_SECRET>       # freeze progression
 GET /api/control?pause=false&dongle=<CONTROL_DONGLE_SECRET>      # resume exactly where it paused
+GET /api/control?interval=5&dongle=<CONTROL_DONGLE_SECRET>       # turn the page every 5 minutes
+GET /api/control?interval=10&dongle=<CONTROL_DONGLE_SECRET>      # turn the page every 10 minutes
 ```
 
 Flags can be combined in one request (e.g. `?book=moby_dick&pause=true&dongle=...`); only the
-flags you pass are changed, everything else is left as-is. Invalid flag values (e.g. `?random=banana`)
-return a `400` error. Requests that don't change the state skip the GitHub commit, avoiding pointless
-redeploys.
+flags you pass are changed, everything else is left as-is. Invalid flag values (e.g. `?random=banana`
+or `?interval=7`) return a `400` error. Requests that don't change the state skip the GitHub
+commit, avoiding pointless redeploys.
+
+Changing `interval` doesn't just swap the divisor in `floor(awakeMinutes / interval)` — that
+would jump the board to a different point in the book the instant the new interval took effect.
+Instead, `/api/control` anchors the switch: it records the current tick and the current
+awake-minutes count at the moment of the change (`tickBase` / `intervalSetAtAwakeMinutes` in
+`config/state.json`), and every tick after that is computed relative to that anchor. The board
+lands on the exact same frame the moment the switch takes effect, then advances at the new pace.
+This also means the cron job hitting `/api/tick` can keep firing every 5 minutes regardless of
+the configured interval: at a 10-minute interval, every other tick just re-pushes the same frame
+to the board, which is harmless.
 
 **Why this needs a git commit, not just a request:** `/api/tick` deliberately takes no query
 params — cron-job.org always hits the same bare URL, forever. So a choice made by visiting

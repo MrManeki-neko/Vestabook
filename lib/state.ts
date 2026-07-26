@@ -8,12 +8,18 @@ export interface ControlState {
   mode: BookMode;
   pausedAt: string | null;
   accumulatedPauseMinutes: number;
+  intervalMinutes: number | null;
+  tickBase: number;
+  intervalSetAtAwakeMinutes: number | null;
 }
 
 export const DEFAULT_STATE: ControlState = {
   mode: { type: "cycle" },
   pausedAt: null,
   accumulatedPauseMinutes: 0,
+  intervalMinutes: null,
+  tickBase: 0,
+  intervalSetAtAwakeMinutes: null,
 };
 
 // Coerce untrusted JSON (the state file may have been hand-edited) into a valid
@@ -25,6 +31,9 @@ export function normalizeState(raw: unknown): ControlState {
     mode: { type: "cycle" },
     pausedAt: null,
     accumulatedPauseMinutes: 0,
+    intervalMinutes: null,
+    tickBase: 0,
+    intervalSetAtAwakeMinutes: null,
   };
   if (!raw || typeof raw !== "object") return state;
   const r = raw as Record<string, unknown>;
@@ -50,6 +59,26 @@ export function normalizeState(raw: unknown): ControlState {
     state.accumulatedPauseMinutes = r.accumulatedPauseMinutes;
   }
 
+  if (r.intervalMinutes === 5 || r.intervalMinutes === 10) {
+    state.intervalMinutes = r.intervalMinutes;
+  }
+
+  if (
+    typeof r.tickBase === "number" &&
+    Number.isFinite(r.tickBase) &&
+    r.tickBase >= 0
+  ) {
+    state.tickBase = r.tickBase;
+  }
+
+  if (
+    typeof r.intervalSetAtAwakeMinutes === "number" &&
+    Number.isFinite(r.intervalSetAtAwakeMinutes) &&
+    r.intervalSetAtAwakeMinutes >= 0
+  ) {
+    state.intervalSetAtAwakeMinutes = r.intervalSetAtAwakeMinutes;
+  }
+
   return state;
 }
 
@@ -73,12 +102,17 @@ export function isPausedNow(): boolean {
 }
 
 // Minutes to subtract from raw elapsed time: everything accumulated from past pause/resume
-// cycles, plus (if currently paused) the still-ongoing gap since `pausedAt`.
-export function getPauseAdjustmentMinutes(now: Date): number {
-  const state = getState();
+// cycles, plus (if currently paused) the still-ongoing gap since `pausedAt`. Pure variant
+// parameterized by state so callers (e.g. /api/control) can run this against a state fetched
+// from GitHub rather than the locally-deployed one.
+export function getPauseAdjustmentMinutesFor(now: Date, state: ControlState): number {
   let minutes = state.accumulatedPauseMinutes;
   if (state.pausedAt) {
     minutes += pauseMinutesBetween(new Date(state.pausedAt), now);
   }
   return minutes;
+}
+
+export function getPauseAdjustmentMinutes(now: Date): number {
+  return getPauseAdjustmentMinutesFor(now, getState());
 }

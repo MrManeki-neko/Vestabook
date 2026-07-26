@@ -3,6 +3,7 @@ import { listBookIds } from "@/lib/library";
 import { normalizeState, type ControlState } from "@/lib/state";
 import { pauseMinutesBetween } from "@/lib/quietHours";
 import { secretMatches } from "@/lib/auth";
+import { computeAwakeMinutes, computeGlobalTick } from "@/lib/time";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,8 @@ async function githubContents(method: "GET" | "PUT", body?: Record<string, unkno
 
 function applyFlags(
   current: ControlState,
-  flags: { book: string | null; random: string | null; pause: string | null }
+  flags: { book: string | null; random: string | null; pause: string | null; interval: string | null },
+  now: Date
 ): ControlState {
   const next: ControlState = { ...current };
 
@@ -45,10 +47,21 @@ function applyFlags(
   }
 
   if (flags.pause === "true" && !next.pausedAt) {
-    next.pausedAt = new Date().toISOString();
+    next.pausedAt = now.toISOString();
   } else if (flags.pause === "false" && next.pausedAt) {
-    next.accumulatedPauseMinutes += pauseMinutesBetween(new Date(next.pausedAt), new Date());
+    next.accumulatedPauseMinutes += pauseMinutesBetween(new Date(next.pausedAt), now);
     next.pausedAt = null;
+  }
+
+  if (flags.interval === "5" || flags.interval === "10") {
+    const newInterval = Number(flags.interval);
+    const envInterval = Number(process.env.INTERVAL_MINUTES) || 5;
+    const currentEffective = current.intervalMinutes ?? envInterval;
+    if (newInterval !== currentEffective) {
+      next.tickBase = computeGlobalTick(now, current);
+      next.intervalSetAtAwakeMinutes = computeAwakeMinutes(now, current);
+      next.intervalMinutes = newInterval;
+    }
   }
 
   return next;
@@ -66,9 +79,10 @@ export async function GET(req: NextRequest) {
     book: searchParams.get("book"),
     random: searchParams.get("random"),
     pause: searchParams.get("pause"),
+    interval: searchParams.get("interval"),
   };
 
-  if (!flags.book && !flags.random && !flags.pause) {
+  if (!flags.book && !flags.random && !flags.pause && !flags.interval) {
     return NextResponse.json({ error: "no_flags_provided" }, { status: 400 });
   }
 
@@ -80,6 +94,13 @@ export async function GET(req: NextRequest) {
         { status: 400 }
       );
     }
+  }
+
+  if (flags.interval !== null && flags.interval !== "5" && flags.interval !== "10") {
+    return NextResponse.json(
+      { error: "invalid_flag_value", flag: "interval", allowed: ["5", "10"] },
+      { status: 400 }
+    );
   }
 
   const validIds = listBookIds();
@@ -114,7 +135,7 @@ export async function GET(req: NextRequest) {
       JSON.parse(Buffer.from(current.content, "base64").toString("utf-8"))
     );
 
-    const nextState = applyFlags(currentState, flags);
+    const nextState = applyFlags(currentState, flags, new Date());
 
     // Committing an unchanged state would trigger a pointless Vercel redeploy.
     if (JSON.stringify(nextState) === JSON.stringify(currentState)) {

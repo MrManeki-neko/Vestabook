@@ -19,6 +19,9 @@ describe("normalizeState", () => {
       mode: { type: "single", book: "moby-dick" },
       pausedAt: "2026-01-01T12:00:00.000Z",
       accumulatedPauseMinutes: 42,
+      intervalMinutes: 10,
+      tickBase: 7,
+      intervalSetAtAwakeMinutes: 123,
     };
     expect(normalizeState(valid)).toEqual(valid);
   });
