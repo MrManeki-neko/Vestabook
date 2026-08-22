@@ -135,13 +135,30 @@ comparing notes (see `lib/sequencer.ts`).
 | `VESTABOARD_TOKEN` | yes | Vestaboard Cloud API token (Read/Write scope) |
 | `TICK_SECRET` | yes | Shared secret; cron-job.org must send it as `X-Tick-Secret` |
 | `INTERVAL_MINUTES` | no | Defaults to `5`. Must match the cron-job.org schedule |
-| `START_TIME` | no | ISO timestamp; defaults to build time (`BUILD_TIME`, stamped into `next.config.mjs` at build) if unset |
+| `START_TIME` | no | ISO timestamp. Only a fallback — the clock epoch normally lives in `config/state.json` as `epoch` (see "The clock epoch" below). Last resort is `BUILD_TIME`, stamped into `next.config.mjs` at build |
 | `QUIET_HOURS_START` | no | `HH:MM` (24h), local to `QUIET_HOURS_TZ`. Omit to disable quiet hours entirely |
 | `QUIET_HOURS_END` | no | `HH:MM` (24h). Window can wrap midnight (e.g. `22:00`–`07:00`) |
 | `QUIET_HOURS_TZ` | no | IANA timezone (e.g. `America/New_York`). Defaults to `UTC` |
 | `CONTROL_DONGLE_SECRET` | yes (for `/api/control`) | Shared secret; must be passed as `?dongle=...` |
 | `GITHUB_TOKEN` | yes (for `/api/control`) | Fine-grained PAT, Contents read/write scoped to this repo only |
 | `GITHUB_REPO` | yes (for `/api/control`) | `MrManeki-neko/vestabook` |
+
+## The clock epoch
+
+Every frame index is `floor(awakeMinutesSinceEpoch / INTERVAL_MINUTES)`, and pausing the board
+records a debt in `accumulatedPauseMinutes` that is subtracted from that count. Those two
+numbers only agree if they are measured against the *same* epoch, so the epoch is pinned in
+`config/state.json` as `epoch` — the same git-committed file the pause debt lives in.
+`lib/time.ts:resolveEpoch` prefers `state.epoch`, then `START_TIME`, then `BUILD_TIME`.
+
+**Do not rely on the `BUILD_TIME` fallback.** `next.config.mjs` re-stamps it on every build,
+and `/api/control` commits to `main`, so every book/pause/interval change triggers a redeploy
+that moves it forward. A pause debt persists across that reset, and once the debt exceeds the
+time since the last deploy the clock is pinned at zero and the board freezes on frame 0 until
+the debt ages out — silently, with `/api/tick` still returning `200`. That is exactly the
+outage this field exists to prevent. `/api/control` pins `epoch` on its first write if it is
+missing, and `computeAwakeMinutes` discards a pause debt larger than the elapsed time (which
+is impossible unless the epoch has drifted) rather than clamping the clock to zero.
 
 ## cron-job.org setup
 

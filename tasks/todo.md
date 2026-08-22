@@ -87,3 +87,39 @@ aesthetic. No new database — the PWA is purely a client of the existing endpoi
   (unrecoverable — never committed). Rule added to tasks/lessons.md.
 - [x] 5. Interval control (built + reviewed)
 - [x] README updated for outside users (PWA section, /api/status, interval flag)
+
+## 2026-08-22 — Incident: text rotation stopped
+
+- [x] Diagnose (three parallel Sonnet subagents: tick/sequencer trace, git-history
+      regression hunt, deploy/cron/env audit — all three converged on the same cause)
+- [x] Reproduce with a failing test
+- [x] Fix root cause + guard
+- [x] Verify end to end against a running dev server
+
+### Root cause
+`lib/time.ts:computeAwakeMinutes` counted awake minutes from `START_TIME || BUILD_TIME`.
+`START_TIME` is unset in production, so the epoch was `BUILD_TIME` — re-stamped on every
+build. A 17-day pause (2026-08-03 → 2026-08-20) wrote `accumulatedPauseMinutes: 15164` into
+`config/state.json`, and the next `/api/control` book switch (4921f82, 2026-08-21) redeployed
+and reset the epoch to ~1 day ago. `elapsed - 15164` went negative, `if (elapsedMinutes < 0)
+elapsedMinutes = 0` pinned the clock, `globalTick` stuck at 0, and every tick re-pushed
+frame 0 of Paradise Lost while still returning `200 {"ok":true}`. Self-healing only around
+2026-09-01, and any control action would have restarted the freeze.
+
+### Fix
+- `epoch` added to `ControlState` and pinned in `config/state.json` (2026-07-06T09:45:56Z,
+  the app's first commit) so the epoch lives in the same durable store as the pause debt.
+- `lib/time.ts:resolveEpoch` prefers `state.epoch` → `START_TIME` → `BUILD_TIME`.
+- A pause debt larger than the elapsed time is now discarded as stale (it is impossible
+  unless the epoch drifted) instead of clamping the clock to zero.
+- `/api/control` pins `epoch` on its first write, so a fresh install can never drift.
+
+### Review
+- 31/31 vitest tests pass (6 new), `npx tsc --noEmit` clean, `npx next build` clean.
+- Before/after proof with the same harness against the real `config/state.json` and a
+  simulated fresh deploy: pre-fix `frameIndex` 0, 0, 0 ("PARADISE LOST BOOK I" forever);
+  post-fix 1578 → 1579 → 1580 with real advancing text.
+- Live dev server (`BUILD_TIME` = now, no `START_TIME`): `/api/status` returns
+  `frameIndex: 1559` of 4476, not 0.
+- Not verifiable from here: whether `TICK_SECRET` still matches cron-job.org's header, and
+  whether the cron job itself is still active and pointed at the live domain.

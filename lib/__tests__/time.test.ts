@@ -27,6 +27,7 @@ const baseState: ControlState = {
   intervalMinutes: null,
   tickBase: 0,
   intervalSetAtAwakeMinutes: null,
+  epoch: null,
 };
 
 describe("computeGlobalTick", () => {
@@ -71,6 +72,74 @@ describe("computeGlobalTick", () => {
     const tenMinutesLater = new Date(switchMoment.getTime() + 10 * 60_000);
     expect(computeGlobalTick(tenMinutesLater, stateAfterSwitch)).toBe(tickBefore + 1);
   });
+
+  // Regression: the board froze on a single frame for ~17 days. `accumulatedPauseMinutes`
+  // persists in config/state.json, but the epoch it was measured against does not — with
+  // START_TIME unset the epoch is BUILD_TIME, which is re-stamped on every deploy, and every
+  // /api/control change commits to main and triggers a redeploy. The debt then exceeded the
+  // elapsed time, the clamp in computeAwakeMinutes pinned awake to 0, and the tick stuck at 0.
+  it("keeps advancing when a persisted pause debt outlives the epoch it was measured against", () => {
+    process.env.INTERVAL_MINUTES = "5";
+    delete process.env.START_TIME;
+    process.env.BUILD_TIME = "2026-08-21T16:51:13.000Z"; // last redeploy
+
+    const state: ControlState = { ...baseState, accumulatedPauseMinutes: 15164 };
+
+    const now = new Date("2026-08-22T12:00:00.000Z");
+    const anHourLater = new Date("2026-08-22T13:00:00.000Z");
+
+    expect(computeAwakeMinutes(now, state)).toBeGreaterThan(0);
+    expect(computeGlobalTick(anHourLater, state)).toBeGreaterThan(computeGlobalTick(now, state));
+  });
+
+  it("honours the pause debt normally when the epoch is old enough to have earned it", () => {
+    process.env.INTERVAL_MINUTES = "5";
+    delete process.env.START_TIME;
+    delete process.env.BUILD_TIME;
+
+    // Epoch pinned in the state file, well before the pause was taken.
+    const state: ControlState = {
+      ...baseState,
+      epoch: "2026-07-06T09:45:56.000Z",
+      accumulatedPauseMinutes: 15164,
+    };
+    const now = new Date("2026-08-22T12:00:00.000Z");
+
+    const rawElapsed = Math.floor((now.getTime() - Date.parse(state.epoch!)) / 60_000);
+    expect(computeAwakeMinutes(now, state)).toBe(rawElapsed - 15164);
+  });
+
+  it("prefers the state epoch over START_TIME and BUILD_TIME", () => {
+    process.env.INTERVAL_MINUTES = "5";
+    process.env.START_TIME = "2026-05-01T00:00:00.000Z";
+    process.env.BUILD_TIME = "2026-08-21T16:51:13.000Z";
+
+    const state: ControlState = { ...baseState, epoch: "2026-08-22T11:00:00.000Z" };
+    const now = new Date("2026-08-22T12:00:00.000Z");
+
+    expect(computeAwakeMinutes(now, state)).toBe(60);
+  });
+
+  it("falls back to START_TIME, then BUILD_TIME, when no epoch is pinned", () => {
+    process.env.INTERVAL_MINUTES = "5";
+    const now = new Date("2026-08-22T12:00:00.000Z");
+
+    process.env.START_TIME = "2026-08-22T10:00:00.000Z";
+    process.env.BUILD_TIME = "2026-08-22T11:00:00.000Z";
+    expect(computeAwakeMinutes(now, baseState)).toBe(120);
+
+    delete process.env.START_TIME;
+    expect(computeAwakeMinutes(now, baseState)).toBe(60);
+  });
+
+  it("skips an unparseable epoch instead of poisoning the clock with NaN", () => {
+    process.env.INTERVAL_MINUTES = "5";
+    delete process.env.START_TIME;
+    process.env.BUILD_TIME = "2026-08-22T11:00:00.000Z";
+
+    const state: ControlState = { ...baseState, epoch: "not-a-date" };
+    expect(computeAwakeMinutes(new Date("2026-08-22T12:00:00.000Z"), state)).toBe(60);
+  });
 });
 
 describe("normalizeState — interval fields", () => {
@@ -90,6 +159,15 @@ describe("normalizeState — interval fields", () => {
     expect(normalizeState({ tickBase: -1 }).tickBase).toBe(0);
     expect(normalizeState({ tickBase: "banana" }).tickBase).toBe(0);
     expect(normalizeState({ tickBase: NaN }).tickBase).toBe(0);
+  });
+
+  it("accepts a parseable ISO epoch, else defaults to null", () => {
+    expect(normalizeState({ epoch: "2026-07-06T09:45:56.000Z" }).epoch).toBe(
+      "2026-07-06T09:45:56.000Z"
+    );
+    expect(normalizeState({ epoch: "banana" }).epoch).toBeNull();
+    expect(normalizeState({ epoch: 12345 }).epoch).toBeNull();
+    expect(normalizeState({}).epoch).toBeNull();
   });
 
   it("accepts a finite non-negative intervalSetAtAwakeMinutes, else defaults to null", () => {
