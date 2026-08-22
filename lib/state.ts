@@ -11,6 +11,9 @@ export interface ControlState {
   intervalMinutes: number | null;
   tickBase: number;
   intervalSetAtAwakeMinutes: number | null;
+  // Clock epoch, pinned here rather than read from the environment so it lives in the same
+  // durable store as accumulatedPauseMinutes. See resolveEpoch in lib/time.ts.
+  epoch: string | null;
 }
 
 export const DEFAULT_STATE: ControlState = {
@@ -20,6 +23,7 @@ export const DEFAULT_STATE: ControlState = {
   intervalMinutes: null,
   tickBase: 0,
   intervalSetAtAwakeMinutes: null,
+  epoch: null,
 };
 
 // Coerce untrusted JSON (the state file may have been hand-edited) into a valid
@@ -34,6 +38,7 @@ export function normalizeState(raw: unknown): ControlState {
     intervalMinutes: null,
     tickBase: 0,
     intervalSetAtAwakeMinutes: null,
+    epoch: null,
   };
   if (!raw || typeof raw !== "object") return state;
   const r = raw as Record<string, unknown>;
@@ -77,6 +82,10 @@ export function normalizeState(raw: unknown): ControlState {
     r.intervalSetAtAwakeMinutes >= 0
   ) {
     state.intervalSetAtAwakeMinutes = r.intervalSetAtAwakeMinutes;
+  }
+
+  if (typeof r.epoch === "string" && !Number.isNaN(Date.parse(r.epoch))) {
+    state.epoch = r.epoch;
   }
 
   return state;

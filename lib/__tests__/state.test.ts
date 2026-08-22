@@ -22,6 +22,7 @@ describe("normalizeState", () => {
       intervalMinutes: 10,
       tickBase: 7,
       intervalSetAtAwakeMinutes: 123,
+      epoch: "2026-07-06T09:45:56.000Z",
     };
     expect(normalizeState(valid)).toEqual(valid);
   });

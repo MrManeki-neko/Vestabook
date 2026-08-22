@@ -3,7 +3,7 @@ import { listBookIds } from "@/lib/library";
 import { normalizeState, type ControlState } from "@/lib/state";
 import { pauseMinutesBetween } from "@/lib/quietHours";
 import { secretMatches } from "@/lib/auth";
-import { computeAwakeMinutes, computeGlobalTick } from "@/lib/time";
+import { computeAwakeMinutes, computeGlobalTick, resolveEpoch } from "@/lib/time";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +37,14 @@ function applyFlags(
   now: Date
 ): ControlState {
   const next: ControlState = { ...current };
+
+  // Pin the clock epoch into the state file the first time we write it. Left unpinned it
+  // falls back to BUILD_TIME, which is re-stamped on every build — and every write here
+  // commits to main and redeploys — so the epoch would drift away from the pause debt
+  // recorded below and strand the board on a single frame.
+  if (!next.epoch) {
+    next.epoch = resolveEpoch(current).toISOString();
+  }
 
   if (flags.book) {
     next.mode = { type: "single", book: flags.book };

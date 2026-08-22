@@ -7,5 +7,6 @@
   "accumulatedPauseMinutes": 15164,
   "intervalMinutes": null,
   "tickBase": 0,
-  "intervalSetAtAwakeMinutes": null
+  "intervalSetAtAwakeMinutes": null,
+  "epoch": "2026-07-06T09:45:56.000Z"
 }
