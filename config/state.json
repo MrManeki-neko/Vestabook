@@ -3,8 +3,8 @@
     "type": "single",
     "book": "inferno"
   },
-  "pausedAt": "2026-08-23T18:41:31.884Z",
-  "accumulatedPauseMinutes": 15164,
+  "pausedAt": null,
+  "accumulatedPauseMinutes": 15437,
   "intervalMinutes": null,
   "tickBase": 0,
   "intervalSetAtAwakeMinutes": null,
